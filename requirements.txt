@@ -1,5 +1,6 @@
-requests
-pandas
-PyPDF2
-pyyaml
-binaryornot
+requests==2.27.1
+pandas==1.4.0
+PyPDF2==1.26.0
+pyyaml==6.0
+binaryornot==0.4.4
+psutil==5.9.0
