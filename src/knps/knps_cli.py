@@ -26,7 +26,9 @@ import psutil
 import mimetypes
 from binaryornot.check import is_binary
 
-from knps.settings import (
+import pkg_resources
+
+from settings import (
     CACHE_FILE_PROCESSING,
     KNPS_SERVER_DEV,
     KNPS_SERVER_PROD
@@ -45,10 +47,16 @@ PROCESS_SYNC_AGE_SECONDS = 10
 ###################################################
 def get_version(file_loc = __file__):
     cwdir = os.path.dirname(os.path.realpath(file_loc))
-    proj_ver = subprocess.run(["git", "describe", "--tags", "--long"], stdout=subprocess.PIPE, text=True, cwd=cwdir).stdout.strip()
-    rev_count = subprocess.run(["git", "log", "--oneline"], stdout=subprocess.PIPE, text=True, cwd=cwdir).stdout.strip()
-    rev_count = len(rev_count.split("\n"))
-    return f'{proj_ver}-{rev_count}'
+    print(cwdir)
+    try:
+        proj_ver = subprocess.run(["git", "describe", "--tags", "--long"], stdout=subprocess.PIPE, text=True, cwd=cwdir).stdout.strip()
+        rev_count = subprocess.run(["git", "log", "--oneline"], stdout=subprocess.PIPE, text=True, cwd=cwdir).stdout.strip()
+        rev_count = len(rev_count.split("\n"))
+        return f'{proj_ver}-{rev_count}-development'
+    except:
+        proj_ver = pkg_resources.require('knps-cli')[0].version
+        return f'v{proj_ver}-release'
+
 
 
 HASH_CACHE = {}
@@ -808,7 +816,7 @@ class Monitor:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         dir_regex = r'{}'.format('|'.join([x.lstrip('/') for x in self.dirs]))
 
-        blacklist = ['asdf']#'stat64', 'filecoordinationd', 'getattrlist', 'fsgetpath', 'getxattr', 'fsctl', 'statfs64']
+        blacklist = ['stat64', 'filecoordinationd', 'getattrlist', 'fsgetpath', 'getxattr', 'fsctl', 'statfs64']
         blacklist_regex = r'{}'.format('|'.join(blacklist))
 
         procs = {}
@@ -837,7 +845,7 @@ class Monitor:
                 if any(substring in line_breakdown[-1] for substring in ["Sublime Text", "bird", "quicklookd"]):
                     continue
 
-                print(line_breakdown)
+                # print(line_breakdown)
 
                 data = re.split(r'\s+', line)
                 timestamp = data[0]
@@ -897,7 +905,7 @@ class Monitor:
                 except:
                     pass
 
-                print(proc_key, action, open_type, pathname not in procs[proc_key]['outputs'])
+                # print(proc_key, action, open_type, pathname not in procs[proc_key]['outputs'])
 
                 file_data = get_file_data(pathname)
 
