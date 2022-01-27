@@ -10,7 +10,6 @@ import os
 import requests
 import json
 import csv
-import pandas as pd
 import PyPDF2
 import re
 import codecs
@@ -28,7 +27,7 @@ from binaryornot.check import is_binary
 
 import pkg_resources
 
-from settings import (
+from knps.settings import (
     CACHE_FILE_PROCESSING,
     KNPS_SERVER_DEV,
     KNPS_SERVER_PROD
@@ -118,28 +117,26 @@ def getShinglesFname(fname, file_type):
     return getShingles(text, fname, file_type)
 
 def hash_csv_file_lines(fname):
-    data = pd.read_csv(fname)
     hashes = []
-    for i in range(100):
-        if i >= data.shape[0]:
-            return hashes;
-        row = data.iloc[i]
-        hashes.append(hashlib.md5(row.__str__().strip().encode()).hexdigest())
-    for i in range(100, 1000, 5):
-        if i >= data.shape[0]:
-            return hashes;
-        row = data.iloc[i:(i+10)]
-        hashes.append(hashlib.md5(row.__str__().strip().encode()).hexdigest())
-    for i in range(1000, 10000, 50):
-        if i >= data.shape[0]:
-            return hashes;
-        row = data.iloc[i:(i+100)]
-        hashes.append(hashlib.md5(row.__str__().strip().encode()).hexdigest())
-    diff = data.shape[0] - 10000
-    jump = diff//100
-    for i in range(10000, data.shape[0], jump):
-        row = data.iloc[i:(i+jump)]
-        hashes.append(hashlib.md5(row.__str__().strip().encode()).hexdigest())
+    with open(fname, "rt") as f:
+        i = 0
+        next_read = 0
+        for line in f:
+            if i == next_read:
+                hashes.append(hashlib.md5(line.strip().encode()).hexdigest())
+
+                if i < 100:
+                    next_read += 1
+                elif i < 1000:
+                    next_read += 5
+                elif i < 10000:
+                    next_read += 50
+                elif i < 100000:
+                    next_read += 500
+                else:
+                    next_read += 1000
+
+            i += 1
 
     return hashes
 
@@ -271,10 +268,20 @@ def send_createdataset(user, id, title, desc, targetHash):
 
 def hash_CSV_columns(fname):
     hashes = []
-    df = pd.read_csv(fname)
-    for column_name in df.columns:
-        column = df[column_name].__str__().strip().encode()
-        hashes.append(hashlib.md5(column).hexdigest())
+    cols = []
+    with open(fname, "rt") as f:
+        dialect = csv.Sniffer().sniff(f.read(1024))
+        csvfile.seek(0)
+        reader = csv.reader(f, dialect)
+        for row in reader:
+            for i, x in enumerate(row):
+                if len(cols) <= i:
+                    cols.append([])
+                cols[i].append(x)
+
+    for column in cols:
+        column_str = ''.join(column).strip().encode()
+        hashes.append(hashlib.md5(column_str).hexdigest())
     return hashes
 
 def hash_image(fname):
@@ -282,28 +289,27 @@ def hash_image(fname):
     return None
 
 def get_csv_file_shingles(fname, fingerprint_bytes):
-    data = pd.read_csv(fname)
     hashes = []
-    for i in range(100):
-        if i >= data.shape[0]:
-            return hashes;
-        row = data.iloc[i]
-        hashes.append(int.from_bytes(hashlib.sha256(row.__str__().encode()).digest()[:fingerprint_bytes], 'little'))
-    for i in range(100, 1000, 5):
-        if i >= data.shape[0]:
-            return hashes;
-        row = data.iloc[i:(i+10)]
-        hashes.append(int.from_bytes(hashlib.sha256(row.__str__().encode()).digest()[:fingerprint_bytes], 'little'))
-    for i in range(1000, 10000, 50):
-        if i >= data.shape[0]:
-            return hashes;
-        row = data.iloc[i:(i+100)]
-        hashes.append(int.from_bytes(hashlib.sha256(row.__str__().encode()).digest()[:fingerprint_bytes], 'little'))
-    diff = data.shape[0] - 10000
-    jump = diff//100
-    for i in range(10000, data.shape[0], jump):
-        row = data.iloc[i:(i+jump)]
-        hashes.append(int.from_bytes(hashlib.sha256(row.__str__().encode()).digest()[:fingerprint_bytes], 'little'))
+    with open(fname, "rt") as f:
+        i = 0
+        next_read = 0
+        for line in f:
+            if i == next_read:
+                hashes.append(int.from_bytes(hashlib.sha256(line.strip().encode()).digest()[:fingerprint_bytes], 'little'))
+
+                if i < 100:
+                    next_read += 1
+                elif i < 1000:
+                    next_read += 5
+                elif i < 10000:
+                    next_read += 50
+                elif i < 100000:
+                    next_read += 500
+                else:
+                    next_read += 1000
+
+            i += 1
+
     return hashes
 
 # This fucntion removes punctiation and whitespace.
