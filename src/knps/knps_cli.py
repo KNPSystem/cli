@@ -46,13 +46,13 @@ PROCESS_SYNC_AGE_SECONDS = 10
 ###################################################
 def get_version(file_loc = __file__):
     cwdir = os.path.dirname(os.path.realpath(file_loc))
-    print(cwdir)
-    try:
-        proj_ver = subprocess.run(["git", "describe", "--tags", "--long"], stdout=subprocess.PIPE, text=True, cwd=cwdir).stdout.strip()
-        rev_count = subprocess.run(["git", "log", "--oneline"], stdout=subprocess.PIPE, text=True, cwd=cwdir).stdout.strip()
+
+    proj_ver = subprocess.run(["git", "describe", "--tags", "--long"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, cwd=cwdir).stdout.strip()
+    if proj_ver:
+        rev_count = subprocess.run(["git", "log", "--oneline"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, cwd=cwdir).stdout.strip()
         rev_count = len(rev_count.split("\n"))
         return f'{proj_ver}-{rev_count}-development'
-    except:
+    else:
         proj_ver = pkg_resources.require('knps-cli')[0].version
         return f'v{proj_ver}-release'
 
