@@ -16,7 +16,6 @@ import re
 import codecs
 import random
 import time
-import numpy as np
 import webbrowser
 import yaml
 import subprocess
@@ -27,7 +26,7 @@ import psutil
 import mimetypes
 from binaryornot.check import is_binary
 
-from settings import (
+from knps.settings import (
     CACHE_FILE_PROCESSING,
     KNPS_SERVER_DEV,
     KNPS_SERVER_PROD
@@ -930,7 +929,7 @@ class Monitor:
 #
 # main()
 #
-if __name__ == "__main__":
+def main():
     # execute only if run as a script
     parser = argparse.ArgumentParser(description='KNPS command line')
 
@@ -1035,3 +1034,6 @@ if __name__ == "__main__":
         else:
             m = Monitor(u)
             m.run()
+
+if __name__ == "__main__":
+    main()
