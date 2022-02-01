@@ -665,10 +665,9 @@ class Watcher:
 
             file_list = self.user.get_files()
 
-            if process and len(process['outputs']) + len(process['accesses']) > 0:
-                process_files = set.union(process['inputs'], process['outputs'], process['accesses'])
+            if process and len(process['output_files']) + len(process['access_files']) > 0:
+                process_files = set.union(process['input_files'], process['output_files'], process['access_files'])
                 file_list = [value for value in process_files if value in file_list]
-
 
             longTodoList = [x for x in file_list]
             smallTodoLists = [longTodoList[i:i+k] for i in range(0, len(longTodoList), k)]
@@ -731,9 +730,9 @@ class Watcher:
             install_id = self.user.get_install_id()
             hostname = socket.gethostname()
 
-            process['input_files'] = [(x, file_hashes[x]) for x in process['inputs'] if x in file_hashes]
-            process['output_files'] = [(x, file_hashes[x]) for x in process['outputs'] if x in file_hashes]
-            process['access_files'] = [(x, file_hashes[x]) for x in process['accesses'] if x in file_hashes]
+            process['input_files'] = [(x, file_hashes[x]) for x in process['input_files'] if x in file_hashes]
+            process['output_files'] = [(x, file_hashes[x]) for x in process['output_files'] if x in file_hashes]
+            process['access_files'] = [(x, file_hashes[x]) for x in process['access_files'] if x in file_hashes]
             process['username'] = self.user.username
             process['knps_version'] = knps_version
             process['install_id'] = install_id
@@ -837,6 +836,7 @@ class Monitor:
                     if diff.seconds >= PROCESS_SYNC_AGE_SECONDS:
                         print(f'Syncing {p["name"]}')
                         procs[key]['synced'] = True
+
                         self.watcher.observeAndSync(process=p)
 
 
@@ -890,6 +890,9 @@ class Monitor:
                                         'inputs': set([]),
                                         'outputs': set([]),
                                         'accesses': set([]),
+                                        'input_files': set([]),
+                                        'output_files': set([]),
+                                        'access_files': set([]),
                                         'cmdline': [],
                                         'pid': '',
                                         'file_data': {}}
@@ -923,14 +926,17 @@ class Monitor:
 
                 if ('WrData' in action or open_type == 'write' or (modified_flag and not ('RdData' in action or open_type == 'read'))):
                     procs[proc_key]['outputs'].add(file_hash)
+                    procs[proc_key]['output_files'].add(file_data['file_name'])
                     procs[proc_key]['last_update'] = dt
                     procs[proc_key].pop('synced', None) # Need to sync again
                 elif ('RdData' in action or open_type == 'read' or not modified_flag):
                     procs[proc_key]['inputs'].add(file_hash)
+                    procs[proc_key]['input_files'].add(file_data['file_name'])
                     procs[proc_key]['last_update'] = dt
                     procs[proc_key].pop('synced', None) # Need to sync again
                 elif pathname not in procs[proc_key]['accesses'] and file_hash not in procs[proc_key]['inputs'] and file_hash not in procs[proc_key]['outputs']:
                     procs[proc_key]['accesses'].add(file_hash)
+                    procs[proc_key]['access_files'].add(file_data['file_name'])
                     procs[proc_key]['last_update'] = dt
                     procs[proc_key].pop('synced', None) # Need to sync again
 
