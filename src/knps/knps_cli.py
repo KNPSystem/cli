@@ -796,6 +796,7 @@ class Monitor:
 
     def __get_process__(self, procname, threadid, filename):
         proc_key = f'{procname}.{threadid}'
+
         if proc_key not in self.proc_cache:
             for proc in psutil.process_iter():
                 try:
@@ -803,6 +804,7 @@ class Monitor:
                     # if pinfo['open_files'] != None:
                     #     print(pinfo)
                     if pinfo['name'] == procname and pinfo['open_files'] != None:
+                    # if pinfo['open_files'] != None:
                         for f in pinfo['open_files']:
                             if filename in f.path:
                                 self.proc_cache[proc_key] = pinfo
@@ -821,7 +823,10 @@ class Monitor:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         dir_regex = r'{}'.format('|'.join([x.lstrip('/') for x in self.dirs]))
 
-        blacklist = ['stat64', 'filecoordinationd', 'getattrlist', 'fsgetpath', 'getxattr', 'fsctl', 'statfs64']
+        blacklist = ['stat64', 'filecoordinationd', 'getattrlist', 'fsgetpath', 'getxattr', 'fsctl', 'statfs64', 'Sublime Text'] ## "bird", "quicklookd"
+        # blacklist = ['stat64', 'statfs64', 'Sublime Text'] ## "bird", "quicklookd"
+
+        # blacklist = ['Sublime Text'] ## "bird", "quicklookd"
         blacklist_regex = r'{}'.format('|'.join(blacklist))
 
         procs = {}
@@ -830,6 +835,7 @@ class Monitor:
             dt = datetime.now()
 
             for key, p in procs.items():
+                # print(key, p)
                 if 'last_update' in p and 'synced' not in p and len(p['outputs']) > 0:
 
                     diff = dt - p['last_update']
@@ -839,7 +845,7 @@ class Monitor:
 
                         self.watcher.observeAndSync(process=p)
 
-
+            # print("\n\n\n\n")
 
             line = line.rstrip().decode()
             if re.search(blacklist_regex, line):
@@ -847,12 +853,6 @@ class Monitor:
 
             match = re.search(dir_regex, line)
             if match:
-                line_breakdown = line.split(maxsplit = 6)
-                if any(substring in line_breakdown[-1] for substring in ["Sublime Text", "bird", "quicklookd"]):
-                    continue
-
-                # print(line_breakdown)
-
                 data = re.split(r'\s+', line)
                 timestamp = data[0]
                 action = data[1]
@@ -899,8 +899,23 @@ class Monitor:
 
 
                 proc = self.__get_process__(process_name, thread_id, pathname)
+                print("PROCESS", process_name, thread_id, pathname, open_type, proc, "\n", line)
 
                 if proc:
+                    print(proc)
+                    print("\n\n\n\n\n\n\n\n\n")
+                    if len(proc['inputs']) > 1 and proc['name'] == "Python":
+                        # print("\n\n\n\n\n\n\n\n\n")
+                        print(proc['inputs'])
+                        new_inputs = []
+                        new_outputs = []
+                        for i in proc["inputs"]:
+                            if i[-3:] == ".py":
+                                new_inputs.append(i)
+                            else:
+                                new_outputs.append(i)
+                        print(new_inputs, new_outputs)
+
                     procs[proc_key]['cmdline'] = proc['cmdline']
                     procs[proc_key]['pid'] = proc['pid']
                     procs[proc_key]['last_update'] = dt
@@ -925,16 +940,19 @@ class Monitor:
                 procs[proc_key]['file_data'][file_hash] = file_data
 
                 if ('WrData' in action or open_type == 'write' or (modified_flag and not ('RdData' in action or open_type == 'read'))):
+                    print("WRITE!!")
                     procs[proc_key]['outputs'].add(file_hash)
                     procs[proc_key]['output_files'].add(file_data['file_name'])
                     procs[proc_key]['last_update'] = dt
                     procs[proc_key].pop('synced', None) # Need to sync again
                 elif ('RdData' in action or open_type == 'read' or not modified_flag):
+                     print("Read!!")
                     procs[proc_key]['inputs'].add(file_hash)
                     procs[proc_key]['input_files'].add(file_data['file_name'])
                     procs[proc_key]['last_update'] = dt
                     procs[proc_key].pop('synced', None) # Need to sync again
                 elif pathname not in procs[proc_key]['accesses'] and file_hash not in procs[proc_key]['inputs'] and file_hash not in procs[proc_key]['outputs']:
+                     print("ACCESS!!")
                     procs[proc_key]['accesses'].add(file_hash)
                     procs[proc_key]['access_files'].add(file_data['file_name'])
                     procs[proc_key]['last_update'] = dt
@@ -943,7 +961,8 @@ class Monitor:
 
                 # print(f'{timestamp} - {action} - {pathname} - {process_name} - Thread: {thread_id}')
                 # print(line)
-                print(json.dumps(procs, indent=2, default=str))
+                # print(json.dumps(procs, indent=2, default=str))
+                # print("\n\n\n\n\n\n\n\n\n")
 
 
 #
