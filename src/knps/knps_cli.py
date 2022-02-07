@@ -41,6 +41,8 @@ DIR_DB_FILE = '.knps_dir_db'
 
 PROCESS_SYNC_AGE_SECONDS = 10
 
+INCLUDE_HIDDEN_FILES = False
+
 ###################################################
 # Some util functions
 ###################################################
@@ -693,14 +695,15 @@ class Watcher:
             skipCount = 0
             uploadCount = 0
             for f in todoChunk:
+                if not INCLUDE_HIDDEN_FILES and not f.endswith("/") and f[f.rindex("/")+1] == ".":
+                    continue
                 print("Processing", f)
                 try:
                     file_hashes[f] = hash_file(f)
 
-                    #if self.file_already_processed(f):
-                    #    print(" -- Already processed")
-                    #    continue
-
+                    if self.file_already_processed(f):
+                       print(" -- Already processed")
+                       continue
 
                     observationList.append(self._observeFile_(f))
                     uploadCount += 1
@@ -823,8 +826,8 @@ class Monitor:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         dir_regex = r'{}'.format('|'.join([x.lstrip('/') for x in self.dirs]))
 
-        blacklist = ['stat64', 'filecoordinationd', 'getattrlist', 'fsgetpath', 'getxattr', 'fsctl', 'statfs64', 'Sublime Text'] ## "bird", "quicklookd"
-        # blacklist = ['stat64', 'statfs64', 'Sublime Text'] ## "bird", "quicklookd"
+        # blacklist = ['stat64', 'filecoordinationd', 'getattrlist', 'fsgetpath', 'getxattr', 'fsctl', 'statfs64', 'Sublime Text'] ## "bird", "quicklookd"
+        blacklist = ['stat64', 'getattrlist', 'fsgetpath' 'statfs64', 'Sublime Text'] ## "bird", "quicklookd"
 
         # blacklist = ['Sublime Text'] ## "bird", "quicklookd"
         blacklist_regex = r'{}'.format('|'.join(blacklist))
@@ -867,6 +870,8 @@ class Monitor:
                         path_obj.name.startswith('~$') or
                         path_obj.name.endswith('.swp$')):
                         continue
+                    if not INCLUDE_HIDDEN_FILES and not pathname.endswith("/") and pathname[pathname.rindex("/")+1] == ".":
+                        continue
                 else:
                     pathname = None
                     continue
@@ -899,7 +904,6 @@ class Monitor:
 
 
                 proc = self.__get_process__(process_name, thread_id, pathname)
-                print("PROCESS", process_name, thread_id, pathname, open_type, proc, "\n", line)
 
                 if proc:
                     print(proc)
@@ -935,6 +939,7 @@ class Monitor:
 
                 if not file_data:
                     continue
+                print("PROCESS", process_name, thread_id, pathname, open_type, proc, "\n", line)
                 file_hash = file_data['file_hash']
 
                 procs[proc_key]['file_data'][file_hash] = file_data
@@ -946,13 +951,13 @@ class Monitor:
                     procs[proc_key]['last_update'] = dt
                     procs[proc_key].pop('synced', None) # Need to sync again
                 elif ('RdData' in action or open_type == 'read' or not modified_flag):
-                     print("Read!!")
+                    print("Read!!")
                     procs[proc_key]['inputs'].add(file_hash)
                     procs[proc_key]['input_files'].add(file_data['file_name'])
                     procs[proc_key]['last_update'] = dt
                     procs[proc_key].pop('synced', None) # Need to sync again
                 elif pathname not in procs[proc_key]['accesses'] and file_hash not in procs[proc_key]['inputs'] and file_hash not in procs[proc_key]['outputs']:
-                     print("ACCESS!!")
+                    print("ACCESS!!")
                     procs[proc_key]['accesses'].add(file_hash)
                     procs[proc_key]['access_files'].add(file_data['file_name'])
                     procs[proc_key]['last_update'] = dt
