@@ -46,6 +46,10 @@ DIR_DB_FILE = '.knps_dir_db'
 
 PROCESS_SYNC_AGE_SECONDS = 10
 
+global_dir_regex = "" ##THIS IS NOW A GLOBAL VARIABLE PROBABLY CHANGE BACK LATER PROBABLY NOT A GOOD IDEA LONG TERM.
+global_watcher = None
+global_procs = {}
+
 ###################################################
 # Some util functions
 ###################################################
@@ -650,7 +654,7 @@ class Watcher:
     #
     # Collect some observations
     #
-    def observeAndSync(self, file_loc = None, process=None):
+    def observeAndSync(self, file_loc = None, process=None, single_file = None):
         if file_loc == None:
             file_loc = __file__
         # If there are TODO items outstanding, great.
@@ -680,6 +684,10 @@ class Watcher:
             for smallTodoList in smallTodoLists:
                 self.user.addTodoList(smallTodoList)
             todoPair = self.user.getNextTodoList()
+
+        if single_file:
+            todoPair = (todoPair[0], [single_file]) ##There may be a better way to do this??
+        print(todoPair)
 
         print("Processing observation list...")
 
@@ -787,91 +795,125 @@ class Watcher:
             optionalFields["shingles"] = shingles
         return (f, file_hash, file_type, line_hashes, optionalFields)
 
-class Handler(FileSystemEventHandler):
+class MyHandler(FileSystemEventHandler):
 
     @staticmethod
     def on_any_event(event):
-        print(event)
-        # if event.is_directory:
-        #     return None
+        # print(event)
+        # print(dir_regex)
+        global global_procs
+        pathname = event.src_path
+        # print(pathname)
+        # print("\n\n\n\n\n\n")
+        if event.is_directory or pathname.startswith('~$') or pathname.endswith('~') or pathname.endswith('.swp') or pathname.endswith('.swx'):
+            return None
+        else:
+            dt = datetime.now()
+            match = re.search(global_dir_regex, pathname)
+            if match:
+                open_type = None
+                proc = None
+                for temp_proc in psutil.process_iter():
+                    try:
+                        pinfo = temp_proc.as_dict(attrs=['pid', 'name', 'cmdline', 'open_files'])
+                        # print(pinfo)
+                        # if pinfo['open_files'] != None:
+                        #     print(pinfo)
+                        if pinfo['open_files'] != None:
+                            for f in pinfo['open_files']:
+                                if re.search(global_dir_regex, f.path):
+                                    print(f.path)
+                                if pathname in f.path:
+                                    proc = pinfo
+                            # self.proc_cache[proc_key] = pinfo
+                    except psutil.NoSuchProcess:
+                        pass
+                print(event, proc)
+                print(pathname, pathname.startswith('~$'), pathname.endswith('.swp'))
+                if not proc:
+                    global_watcher.observeAndSync(single_file = pathname)
+                    return None
 
-        # else:
-        #     dt = datetime.now()
-        #     pathname = event.src_path
-        #     match = re.search(dir_regex, pathname)
-        #     if match:
-        #         open_type = None
-        #         proc = None
-        #         for proc in psutil.process_iter():
-        #             try:
-        #                 pinfo = proc.as_dict(attrs=['pid', 'name', 'cmdline', 'open_files'])
-        #                 # print(pinfo)
-        #                 # if pinfo['open_files'] != None:
-        #                 #     print(pinfo)
-        #                 if pinfo['open_files'] != None:
-        #                     for f in pinfo['open_files']:
-        #                         if filename in f.path:
-        #                             proc = pinfo
-        #                     # self.proc_cache[proc_key] = pinfo
-        #             except psutil.NoSuchProcess:
-        #                 pass
-                
-        #         proc_key = pathname
-        #         if proc:
-        #             procs[proc_key]['cmdline'] = proc['cmdline']
-        #             procs[proc_key]['pid'] = proc['pid']
-        #             procs[proc_key]['last_update'] = dt
+                proc_key = proc['name'] + "." + str(proc["pid"])
+                if proc_key not in global_procs:
+                    global_procs[proc_key] = {'name': proc['name'],
+                                                'key': proc_key,
+                                                'timestamp': dt,
+                                                'inputs': set([]),
+                                                'outputs': set([]),
+                                                'accesses': set([]),
+                                                'input_files': set([]),
+                                                'output_files': set([]),
+                                                'access_files': set([]),
+                                                'cmdline': proc['cmdline'],
+                                                'pid':  proc['pid'],
+                                                'file_data': {}}
 
-        #         # see if the 'accessed' files were modified, if so, they're outputs
-        #         modified_flag = False
-        #         try:
-        #             last_modified = Path(pathname).stat().st_mtime
-        #             if last_modified >= procs[proc_key]['timestamp'].timestamp():
-        #                 modified_flag = True
-        #         except:
-        #             pass
+                global_procs[proc_key]['last_update'] = dt
 
-        #         file_data = get_file_data(pathname)
+                # see if the 'accessed' files were modified, if so, they're outputs
+                modified_flag = False
+                try:
+                    last_modified = Path(pathname).stat().st_mtime
+                    if last_modified >= global_procs[proc_key]['timestamp'].timestamp():
+                        modified_flag = True
+                except:
+                    pass
 
-        #         if not file_data:
-        #             return
-        #         file_hash = file_data['file_hash']
+                file_data = get_file_data(pathname)
 
-        #         procs[proc_key]['file_data'][file_hash] = file_data
+                if not file_data:
+                    return
+                file_hash = file_data['file_hash']
 
-        #         if ('WrData' in action or open_type == 'write' or (modified_flag and not ('RdData' in action or open_type == 'read'))):
-        #             procs[proc_key]['outputs'].add(file_hash)
-        #             procs[proc_key]['output_files'].add(file_data['file_name'])
-        #             procs[proc_key]['last_update'] = dt
-        #             procs[proc_key].pop('synced', None) # Need to sync again
-        #         elif ('RdData' in action or open_type == 'read' or not modified_flag):
-        #             procs[proc_key]['inputs'].add(file_hash)
-        #             procs[proc_key]['input_files'].add(file_data['file_name'])
-        #             procs[proc_key]['last_update'] = dt
-        #             procs[proc_key].pop('synced', None) # Need to sync again
-        #         elif pathname not in procs[proc_key]['accesses'] and file_hash not in procs[proc_key]['inputs'] and file_hash not in procs[proc_key]['outputs']:
-        #             procs[proc_key]['accesses'].add(file_hash)
-        #             procs[proc_key]['access_files'].add(file_data['file_name'])
-        #             procs[proc_key]['last_update'] = dt
-        #             procs[proc_key].pop('synced', None) # Need to sync again
-        #         print(json.dumps(procs, indent=2, default=str))
+                global_procs[proc_key]['file_data'][file_hash] = file_data
+
+                # if ('WrData' in action or open_type == 'write' or (modified_flag and not ('RdData' in action or open_type == 'read'))):
+                #     global_procs[proc_key]['outputs'].add(file_hash)
+                #     global_procs[proc_key]['output_files'].add(file_data['file_name'])
+                #     global_procs[proc_key]['last_update'] = dt
+                #     global_procs[proc_key].pop('synced', None) # Need to sync again
+                # elif ('RdData' in action or open_type == 'read' or not modified_flag):
+                #     global_procs[proc_key]['inputs'].add(file_hash)
+                #     global_procs[proc_key]['input_files'].add(file_data['file_name'])
+                #     global_procs[proc_key]['last_update'] = dt
+                #     global_procs[proc_key].pop('synced', None) # Need to sync again
+                if pathname not in global_procs[proc_key]['accesses'] and file_hash not in global_procs[proc_key]['inputs'] and file_hash not in global_procs[proc_key]['outputs']:
+                    global_procs[proc_key]['accesses'].add(file_hash)
+                    global_procs[proc_key]['access_files'].add(file_data['file_name'])
+                    global_procs[proc_key]['last_update'] = dt
+                    global_procs[proc_key].pop('synced', None) # Need to sync again
+                print(json.dumps(global_procs, indent=2, default=str))
+
+        for key, p in global_procs.items():
+            if 'last_update' in p and 'synced' not in p and len(p['outputs']) > 0:
+
+                diff = dt - p['last_update']
+                if diff.seconds >= PROCESS_SYNC_AGE_SECONDS:
+                    print(f'Syncing {p["name"]}')
+                    global_procs[key]['synced'] = True
+
+                    gloabl_watcher.observeAndSync(process=p)
 
 class Monitor:
-    path = sys.argv[1] if len(sys.argv) > 1 else '.'
     def __init__(self, user):
         self.user = user
-        self.watcher = Watcher(self.user)
+        global global_watcher
+        global_watcher = Watcher(self.user)
         self.config = None
         self.db = None
         self.knps_version = get_version()
 
         self.dirs = self.user.get_dirs()
+        global global_dir_regex 
+        global_dir_regex = r'{}'.format('|'.join([x.lstrip('/') for x in self.dirs]))
 
         self.proc_cache = {}
         self.observer = Observer()
 
-    def __init__(self):
-        self.observer = Observer()
+    # def __init__(self):
+    #     self.observer = Observer()
+
     # def __get_process__(self, procname, threadid, filename):
     #     proc_key = f'{procname}.{threadid}'
     #     if proc_key not in self.proc_cache:
@@ -895,8 +937,8 @@ class Monitor:
     #         return self.proc_cache[proc_key]
 
     def run(self):
-        event_handler = Handler()
-        self.observer.schedule(event_handler, sys.argv[1] if len(sys.argv) > 1 else '.', recursive = True)
+        event_handler = MyHandler()
+        self.observer.schedule(event_handler, '/', recursive = True)
         self.observer.start()
         print("started running")
 
@@ -1145,12 +1187,11 @@ def main():
         if not u.username:
             print("Not logged in; please run: knps --login")
         else:
-            m = Monitor() #add back u
+            m = Monitor(u)
             m.run()
             try:
                 while True:
                     time.sleep(5)
-                    print("here")
             except:
                 m.stop()
 
