@@ -710,7 +710,7 @@ class Watcher:
                 try:
                     file_hashes[f] = hash_file(f)
 
-                    #if self.file_already_processed(f):
+                    # if self.file_already_processed(f):
                     #    print(" -- Already processed")
                     #    continue
 
@@ -803,9 +803,9 @@ class MyHandler(FileSystemEventHandler):
         # print(dir_regex)
         global global_procs
         pathname = event.src_path
-        # print(pathname)
+        # print()
         # print("\n\n\n\n\n\n")
-        if event.is_directory or pathname.startswith('~$') or pathname.endswith('~') or pathname.endswith('.swp') or pathname.endswith('.swx'):
+        if event.is_directory:
             return None
         else:
             dt = datetime.now()
@@ -813,6 +813,7 @@ class MyHandler(FileSystemEventHandler):
             if match:
                 open_type = None
                 proc = None
+                proc2 = None
                 for temp_proc in psutil.process_iter():
                     try:
                         pinfo = temp_proc.as_dict(attrs=['pid', 'name', 'cmdline', 'open_files'])
@@ -822,18 +823,22 @@ class MyHandler(FileSystemEventHandler):
                         if pinfo['open_files'] != None:
                             for f in pinfo['open_files']:
                                 if re.search(global_dir_regex, f.path):
+                                    proc2 = pinfo
                                     print(f.path)
                                 if pathname in f.path:
                                     proc = pinfo
+
                             # self.proc_cache[proc_key] = pinfo
                     except psutil.NoSuchProcess:
                         pass
-                print(event, proc)
-                print(pathname, pathname.startswith('~$'), pathname.endswith('.swp'))
+
+                # print(event, proc, proc2)
                 if not proc:
-                    global_watcher.observeAndSync(single_file = pathname)
+                    if not (pathname.startswith('~$') or pathname.endswith('~') or pathname.endswith('.swp') or pathname.endswith('.swx')):
+                        global_watcher.observeAndSync(single_file = pathname)
                     return None
 
+                # print(proc["open_files"])
                 proc_key = proc['name'] + "." + str(proc["pid"])
                 if proc_key not in global_procs:
                     global_procs[proc_key] = {'name': proc['name'],
@@ -861,6 +866,7 @@ class MyHandler(FileSystemEventHandler):
                     pass
 
                 file_data = get_file_data(pathname)
+                # print("file_data", file_data["file_name"])
 
                 if not file_data:
                     return
@@ -868,6 +874,18 @@ class MyHandler(FileSystemEventHandler):
 
                 global_procs[proc_key]['file_data'][file_hash] = file_data
 
+                print("\n", global_procs[proc_key]['output_files'], "\n")
+                for i in proc["open_files"]:
+                    if i.path != pathname:
+                        file_data = get_file_data(i.path)
+                        if i.path.endswith(".py"):
+                            global_procs[proc_key]['inputs'].add(file_data['file_hash'])
+                            global_procs[proc_key]['input_files'].add(i.path)
+                        global_procs[proc_key]['accesses'].add(file_data['file_hash'])
+                global_procs[proc_key]['outputs'].add(file_hash)
+                global_procs[proc_key]['output_files'].add(file_data['file_name'])
+                global_procs[proc_key]['last_update'] = dt
+                global_procs[proc_key].pop('synced', None) # Need to sync again
                 # if ('WrData' in action or open_type == 'write' or (modified_flag and not ('RdData' in action or open_type == 'read'))):
                 #     global_procs[proc_key]['outputs'].add(file_hash)
                 #     global_procs[proc_key]['output_files'].add(file_data['file_name'])
@@ -878,11 +896,12 @@ class MyHandler(FileSystemEventHandler):
                 #     global_procs[proc_key]['input_files'].add(file_data['file_name'])
                 #     global_procs[proc_key]['last_update'] = dt
                 #     global_procs[proc_key].pop('synced', None) # Need to sync again
-                if pathname not in global_procs[proc_key]['accesses'] and file_hash not in global_procs[proc_key]['inputs'] and file_hash not in global_procs[proc_key]['outputs']:
-                    global_procs[proc_key]['accesses'].add(file_hash)
-                    global_procs[proc_key]['access_files'].add(file_data['file_name'])
-                    global_procs[proc_key]['last_update'] = dt
-                    global_procs[proc_key].pop('synced', None) # Need to sync again
+                # if pathname not in global_procs[proc_key]['accesses'] and file_hash not in global_procs[proc_key]['inputs'] and file_hash not in global_procs[proc_key]['outputs']:
+                    # global_procs[proc_key]['accesses'].add(file_hash)
+                    # global_procs[proc_key]['access_files'].add(file_data['file_name'])
+                    # global_procs[proc_key]['last_update'] = dt
+                    # global_procs[proc_key].pop('synced', None) # Need to sync again
+
                 print(json.dumps(global_procs, indent=2, default=str))
 
         for key, p in global_procs.items():
@@ -893,7 +912,7 @@ class MyHandler(FileSystemEventHandler):
                     print(f'Syncing {p["name"]}')
                     global_procs[key]['synced'] = True
 
-                    gloabl_watcher.observeAndSync(process=p)
+                    global_watcher.observeAndSync(process=p)
 
 class Monitor:
     def __init__(self, user):
