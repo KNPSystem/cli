@@ -23,6 +23,7 @@ import socket
 import threading
 import psutil
 import mimetypes
+import copy
 from binaryornot.check import is_binary
 
 import sys
@@ -85,14 +86,16 @@ def get_file_data(fname):
     p = Path(fname)
     if not p.exists():
         return {}
-
-    stats = p.stat()
-    file_data = {
-        'file_name': fname,
-        'file_hash': hash_file(fname, stats),
-        'file_size': stats.st_size,
-        'modified': stats.st_mtime,
-    }
+    try:
+        stats = p.stat()
+        file_data = {
+            'file_name': fname,
+            'file_hash': hash_file(fname, stats),
+            'file_size': stats.st_size,
+            'modified': stats.st_mtime,
+        }
+    except:
+        return {}
     return file_data
 
 #
@@ -811,6 +814,7 @@ class MyHandler(FileSystemEventHandler):
             dt = datetime.now()
             match = re.search(global_dir_regex, pathname)
             if match:
+                print(event)
                 open_type = None
                 proc = None
                 proc2 = None
@@ -837,9 +841,9 @@ class MyHandler(FileSystemEventHandler):
                     if not (pathname.startswith('~$') or pathname.endswith('~') or pathname.endswith('.swp') or pathname.endswith('.swx')):
                         global_watcher.observeAndSync(single_file = pathname)
                     return None
-
-                # print(proc["open_files"])
+                # print(proc, "\n\n\n", pathname, "\n\n\n")
                 proc_key = proc['name'] + "." + str(proc["pid"])
+                
                 if proc_key not in global_procs:
                     global_procs[proc_key] = {'name': proc['name'],
                                                 'key': proc_key,
@@ -853,7 +857,8 @@ class MyHandler(FileSystemEventHandler):
                                                 'cmdline': proc['cmdline'],
                                                 'pid':  proc['pid'],
                                                 'file_data': {}}
-
+                else:
+                    print("\n", "outputfiles 0", global_procs[proc_key]['output_files'], "\n")
                 global_procs[proc_key]['last_update'] = dt
 
                 # see if the 'accessed' files were modified, if so, they're outputs
@@ -866,23 +871,27 @@ class MyHandler(FileSystemEventHandler):
                     pass
 
                 file_data = get_file_data(pathname)
-                # print("file_data", file_data["file_name"])
+                print("\n\n\n", "file_data", file_data, global_procs, "\n\n\n")
 
                 if not file_data:
                     return
+
+                 # print("\n", global_procs[proc_key]['output_files'], "\n")
+                for i in proc["open_files"]:
+                    if i.path != pathname:
+                        file_data2 = get_file_data(i.path)
+                        if i.path.endswith(".py"):
+                            global_procs[proc_key]['inputs'].add(file_data2['file_hash'])
+                            global_procs[proc_key]['input_files'].add(i.path)
+                            continue
+                        global_procs[proc_key]['accesses'].add(file_data2['file_hash'])
+
                 file_hash = file_data['file_hash']
 
                 global_procs[proc_key]['file_data'][file_hash] = file_data
 
-                print("\n", global_procs[proc_key]['output_files'], "\n")
-                for i in proc["open_files"]:
-                    if i.path != pathname:
-                        file_data = get_file_data(i.path)
-                        if i.path.endswith(".py"):
-                            global_procs[proc_key]['inputs'].add(file_data['file_hash'])
-                            global_procs[proc_key]['input_files'].add(i.path)
-                        global_procs[proc_key]['accesses'].add(file_data['file_hash'])
                 global_procs[proc_key]['outputs'].add(file_hash)
+                # print("\n", "file_data", file_data['file_name'], "\n")
                 global_procs[proc_key]['output_files'].add(file_data['file_name'])
                 global_procs[proc_key]['last_update'] = dt
                 global_procs[proc_key].pop('synced', None) # Need to sync again
@@ -903,6 +912,8 @@ class MyHandler(FileSystemEventHandler):
                     # global_procs[proc_key].pop('synced', None) # Need to sync again
 
                 print(json.dumps(global_procs, indent=2, default=str))
+                # print("\n", "outputfiles 2", global_procs[proc_key]['output_files'], "\n")
+                # print("\n", "file_data 2", file_data['file_name'], "\n")
 
         for key, p in global_procs.items():
             if 'last_update' in p and 'synced' not in p and len(p['outputs']) > 0:
@@ -912,7 +923,8 @@ class MyHandler(FileSystemEventHandler):
                     print(f'Syncing {p["name"]}')
                     global_procs[key]['synced'] = True
 
-                    global_watcher.observeAndSync(process=p)
+                    global_watcher.observeAndSync(process=copy.deepcopy(p))
+
 
 class Monitor:
     def __init__(self, user):
