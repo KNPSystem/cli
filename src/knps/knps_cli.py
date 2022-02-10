@@ -828,13 +828,34 @@ class MyHandler(FileSystemEventHandler):
                             for f in pinfo['open_files']:
                                 if re.search(global_dir_regex, f.path):
                                     proc2 = pinfo
-                                    print(f.path)
+                                    print("\n", f.path, "\n")
                                 if pathname in f.path:
                                     proc = pinfo
 
                             # self.proc_cache[proc_key] = pinfo
                     except psutil.NoSuchProcess:
                         pass
+
+                ## In order to catch vim
+                loc = pathname.rindex("/")+1
+                similar_path = pathname[:loc] + "." + pathname[loc:] + ".swp"
+                print("\n\n\n\n\n\n", global_procs, similar_path, "\n\n\n\n\n\n")
+                for key, val in global_procs.items():
+                    if similar_path in val["output_files"]:
+                        file_data = get_file_data(pathname)
+                        similar_file_hash = None 
+                        for temp, data in val["file_data"].items():
+                            print(temp, data["file_name"], similar_path)
+                            if data["file_name"] == similar_path:
+                                similar_file_hash = data["file_hash"]
+                        print(similar_file_hash)
+                        val["output_files"].remove(similar_path)
+                        val["output_files"].add(pathname)
+                        del val["file_data"][similar_file_hash]
+                        val["file_data"][file_data["file_hash"]] = file_data
+                        val["outputs"].add(file_data["file_hash"])
+                        val["outputs"].remove(similar_file_hash)
+                        # del val['synced']
 
                 # print(event, proc, proc2)
                 if not proc:
@@ -857,8 +878,8 @@ class MyHandler(FileSystemEventHandler):
                                                 'cmdline': proc['cmdline'],
                                                 'pid':  proc['pid'],
                                                 'file_data': {}}
-                else:
-                    print("\n", "outputfiles 0", global_procs[proc_key]['output_files'], "\n")
+                # else:
+                #     print("\n", "outputfiles 0", global_procs[proc_key]['output_files'], "\n")
                 global_procs[proc_key]['last_update'] = dt
 
                 # see if the 'accessed' files were modified, if so, they're outputs
@@ -871,7 +892,7 @@ class MyHandler(FileSystemEventHandler):
                     pass
 
                 file_data = get_file_data(pathname)
-                print("\n\n\n", "file_data", file_data, global_procs, "\n\n\n")
+                # print("\n\n\n", "file_data", file_data, global_procs, "\n\n\n")
 
                 if not file_data:
                     return
