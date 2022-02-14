@@ -824,7 +824,7 @@ class MyHandler(FileSystemEventHandler):
                         # print(pinfo)
                         # if pinfo['open_files'] != None:
                         #     print(pinfo)
-                        if pinfo['open_files'] != None:
+                        if pinfo['open_files'] != None and pinfo['name'] != 'bird':
                             for f in pinfo['open_files']:
                                 if re.search(global_dir_regex, f.path):
                                     proc2 = pinfo
@@ -839,7 +839,7 @@ class MyHandler(FileSystemEventHandler):
                 ## In order to catch vim
                 loc = pathname.rindex("/")+1
                 similar_path = pathname[:loc] + "." + pathname[loc:] + ".swp"
-                print("\n\n\n\n\n\n", global_procs, similar_path, "\n\n\n\n\n\n")
+                # print("\n\n\n\n\n\n", global_procs, similar_path, "\n\n\n\n\n\n")
                 for key, val in global_procs.items():
                     if similar_path in val["output_files"]:
                         file_data = get_file_data(pathname)
