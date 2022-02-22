@@ -814,28 +814,41 @@ class MyHandler(FileSystemEventHandler):
             dt = datetime.now()
             match = re.search(global_dir_regex, pathname)
             if match:
-                print(event)
+                print(time.time(), event)
                 open_type = None
                 proc = None
                 proc2 = None
+                # special_pid = -1
+                # output = subprocess.check_output('ps | grep test.py', shell=True).splitlines()
+                # for line in output:
+                #     words = line.split()
+                #     print(words)
+                #     if words[-1] == b"test.py":
+                #         special_pid = int(words[0])
+                # output = output[output.rindex("\n")+1:]
+                # print(output)
+                # print()
+                start_time = time.time()
                 for temp_proc in psutil.process_iter():
                     try:
                         pinfo = temp_proc.as_dict(attrs=['pid', 'name', 'cmdline', 'open_files'])
                         # print(pinfo)
-                        # if pinfo['open_files'] != None:
+                        # if pinfo['pid'] == special_pid:
+                        #     print("\n\n\n")
                         #     print(pinfo)
+                        #     print("\n\n\n")
                         if pinfo['open_files'] != None and pinfo['name'] != 'bird':
                             for f in pinfo['open_files']:
-                                if re.search(global_dir_regex, f.path):
-                                    proc2 = pinfo
-                                    print("\n", f.path, "\n")
+                                # if re.search(global_dir_regex, f.path):
+                                #     proc2 = pinfo
+                                #     print("\n", f.path, "\n")
                                 if pathname in f.path:
                                     proc = pinfo
 
                             # self.proc_cache[proc_key] = pinfo
                     except psutil.NoSuchProcess:
                         pass
-
+                print(time.time()-start_time)
                 ## In order to catch vim
                 loc = pathname.rindex("/")+1
                 similar_path = pathname[:loc] + "." + pathname[loc:] + ".swp"
