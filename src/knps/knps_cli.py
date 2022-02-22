@@ -50,6 +50,7 @@ PROCESS_SYNC_AGE_SECONDS = 10
 global_dir_regex = "" ##THIS IS NOW A GLOBAL VARIABLE PROBABLY CHANGE BACK LATER PROBABLY NOT A GOOD IDEA LONG TERM.
 global_watcher = None
 global_procs = {}
+global_file_process_dict = {}
 
 ###################################################
 # Some util functions
@@ -657,7 +658,7 @@ class Watcher:
     #
     # Collect some observations
     #
-    def observeAndSync(self, file_loc = None, process=None, single_file = None):
+    def observeAndSync(self, file_loc = None, process=None, single_file = None, verbose = True):
         if file_loc == None:
             file_loc = __file__
         # If there are TODO items outstanding, great.
@@ -672,7 +673,8 @@ class Watcher:
         # interrupted.
         #
         if todoPair is None or process:
-            print("No existing observation list. Formulating new one...")
+            if verbose:
+                print("No existing observation list. Formulating new one...")
             k = 50
 
             file_list = self.user.get_files()
@@ -690,9 +692,10 @@ class Watcher:
 
         if single_file:
             todoPair = (todoPair[0], [single_file]) ##There may be a better way to do this??
-        print(todoPair)
 
-        print("Processing observation list...")
+        if verbose:
+            print(todoPair)
+            print("Processing observation list...")
 
         #
         # Now finish all outstanding TODO lists. Mark them
@@ -709,7 +712,8 @@ class Watcher:
             skipCount = 0
             uploadCount = 0
             for f in todoChunk:
-                print("Processing", f)
+                if verbose:
+                    print("Processing", f)
                 try:
                     file_hashes[f] = hash_file(f)
 
@@ -722,16 +726,20 @@ class Watcher:
                     uploadCount += 1
                     self.record_file_processing(f)
                 except Exception as e:
-                    print("*** Skipping: {}".format(e))
+                    if verbose:
+                        print("*** Skipping: {}".format(e))
                     skipCount += 1
 
-            print("Sending the synclist")
+            if verbose:
+                print("Sending the synclist")
             response = send_synclist(self.user, observationList, file_loc)
             if 'error' in response:
-                print('ERROR: {}'.format(response['error']))
+                if verbose:
+                    print('ERROR: {}'.format(response['error']))
                 break
             else:
-                print("Observed and uploaded", uploadCount, "items. Skipped", skipCount)
+                if verbose:
+                    print("Observed and uploaded", uploadCount, "items. Skipped", skipCount)
                 self.__save_local_db__()
 
                 # Mark the TODO list as done
@@ -753,7 +761,8 @@ class Watcher:
             process['knps_version'] = knps_version
             process['install_id'] = install_id
             process['hostname'] = hostname
-            print(json.dumps(process, indent=2, default=str))
+            if verbose:
+                print(json.dumps(process, indent=2, default=str))
 
             send_process_sync(self.user, process, file_loc=file_loc)
 
@@ -828,7 +837,6 @@ class MyHandler(FileSystemEventHandler):
                 # output = output[output.rindex("\n")+1:]
                 # print(output)
                 # print()
-                start_time = time.time()
                 for temp_proc in psutil.process_iter():
                     try:
                         pinfo = temp_proc.as_dict(attrs=['pid', 'name', 'cmdline', 'open_files'])
@@ -848,7 +856,7 @@ class MyHandler(FileSystemEventHandler):
                             # self.proc_cache[proc_key] = pinfo
                     except psutil.NoSuchProcess:
                         pass
-                print(time.time()-start_time)
+
                 ## In order to catch vim
                 loc = pathname.rindex("/")+1
                 similar_path = pathname[:loc] + "." + pathname[loc:] + ".swp"
@@ -858,10 +866,10 @@ class MyHandler(FileSystemEventHandler):
                         file_data = get_file_data(pathname)
                         similar_file_hash = None 
                         for temp, data in val["file_data"].items():
-                            print(temp, data["file_name"], similar_path)
+                            # print(temp, data["file_name"], similar_path)
                             if data["file_name"] == similar_path:
                                 similar_file_hash = data["file_hash"]
-                        print(similar_file_hash)
+                        # print(similar_file_hash)
                         val["output_files"].remove(similar_path)
                         val["output_files"].add(pathname)
                         del val["file_data"][similar_file_hash]
@@ -877,7 +885,8 @@ class MyHandler(FileSystemEventHandler):
                     return None
                 # print(proc, "\n\n\n", pathname, "\n\n\n")
                 proc_key = proc['name'] + "." + str(proc["pid"])
-                
+                print(proc_key, global_file_process_dict.get(pathname, None))
+
                 if proc_key not in global_procs:
                     global_procs[proc_key] = {'name': proc['name'],
                                                 'key': proc_key,
@@ -945,7 +954,7 @@ class MyHandler(FileSystemEventHandler):
                     # global_procs[proc_key]['last_update'] = dt
                     # global_procs[proc_key].pop('synced', None) # Need to sync again
 
-                print(json.dumps(global_procs, indent=2, default=str))
+                # print(json.dumps(global_procs, indent=2, default=str))
                 # print("\n", "outputfiles 2", global_procs[proc_key]['output_files'], "\n")
                 # print("\n", "file_data 2", file_data['file_name'], "\n")
 
@@ -954,11 +963,15 @@ class MyHandler(FileSystemEventHandler):
 
                 diff = dt - p['last_update']
                 if diff.seconds >= PROCESS_SYNC_AGE_SECONDS:
-                    print(f'Syncing {p["name"]}')
+                    # print(f'Syncing {p["name"]}')
                     global_procs[key]['synced'] = True
 
-                    global_watcher.observeAndSync(process=copy.deepcopy(p))
+                    # thread = threading.Thread(target = observeAndSyncHelper, args = (copy.deepcopy(p), False))
+                    # thread.start()
+                    global_watcher.observeAndSync(process=copy.deepcopy(p), verbose = False)
 
+def observeAndSyncHelper(p, v = True):
+    global_watcher.observeAndSync(process= p , verbose = v)
 
 class Monitor:
     def __init__(self, user):
@@ -1145,10 +1158,22 @@ class Monitor:
 
     #             # print(json.dumps(procs, indent=2, default=str))
 
+def consistentlyUpdateFileProcesses():
+    while True:
+        for temp_proc in psutil.process_iter():
+            try:
+                pinfo = temp_proc.as_dict(attrs=['pid', 'name', 'cmdline', 'open_files'])
+                if pinfo['open_files'] != None and pinfo["name"] not in ["cloudd", "bird"]:
+                    for f in pinfo['open_files']:
+                        if re.search(global_dir_regex, f.path) and f.path[-9:] != ".DS_Store":
+                            if f.path not in global_file_process_dict:
+                                global_file_process_dict[f.path] = {}
+                            global_file_process_dict[f.path][pinfo["pid"]] = (time.time(), pinfo)
+                            print("\n", f.path, pinfo["pid"], pinfo["name"], pinfo["open_files"], "\n")
+            except psutil.NoSuchProcess:
+                pass
+        # time.sleep()
 
-#
-# main()
-#
 def main():
     # execute only if run as a script
     parser = argparse.ArgumentParser(description='KNPS command line')
@@ -1252,6 +1277,8 @@ def main():
         if not u.username:
             print("Not logged in; please run: knps --login")
         else:
+            thread = threading.Thread(target = consistentlyUpdateFileProcesses)
+            thread.start()
             m = Monitor(u)
             m.run()
             try:
