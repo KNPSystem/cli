@@ -2,6 +2,7 @@ import hashlib
 from pathlib import Path
 import argparse
 import configparser
+from datetime import date
 from datetime import datetime
 from datetime import timezone
 import json
@@ -24,6 +25,10 @@ import threading
 import psutil
 import mimetypes
 from binaryornot.check import is_binary
+
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import logging
 
 import pkg_resources
 
@@ -61,15 +66,20 @@ def get_version(file_loc = __file__):
 HASH_CACHE = {}
 def hash_file(fname, stats=None):
     if not stats:
-        p = Path(fname)
-        stats = p.stat()
-    key = f'{fname}-{stats.st_mtime}'
-    if key not in HASH_CACHE:
-        hash_md5 = hashlib.md5()
-        with open(fname, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
-        HASH_CACHE[key] = hash_md5.hexdigest()
+        try:
+            p = Path(fname)
+            stats = p.stat()
+            key = f'{fname}-{stats.st_mtime}'
+
+            if key not in HASH_CACHE:
+                hash_md5 = hashlib.md5()
+                with open(fname, "rb") as f:
+                    for chunk in iter(lambda: f.read(4096), b""):
+                        hash_md5.update(chunk)
+                HASH_CACHE[key] = hash_md5.hexdigest()
+        except FileNotFoundError:
+            key = f'{fname}-None'
+            HASH_CACHE[key] = None
     return HASH_CACHE[key]
 
 def get_file_data(fname):
@@ -440,7 +450,6 @@ class User:
 
     def load_db(self):
         p = Path(Path.home(), DB_FILE)
-        print(p)
         if p.exists():
             self.db = json.load(p.open())
         else:
@@ -782,6 +791,9 @@ class Watcher:
             optionalFields["shingles"] = shingles
         return (f, file_hash, file_type, line_hashes, optionalFields)
 
+
+
+
 class Monitor:
     def __init__(self, user):
         self.user = user
@@ -945,6 +957,324 @@ class Monitor:
                 # print(line)
                 print(json.dumps(procs, indent=2, default=str))
 
+EVENT_TAGS = {('moved', True): 'DIR_MOVED',
+              ('moved', False): 'FILE_MOVED',
+              ('deleted', True): 'DIR_DELETED',
+              ('deleted', False): 'FILE_DELETED',
+              ('created', True): 'DIR_CREATED',
+              ('created', False): 'FILE_CREATED',
+              ('modified', True): 'DIR_MODIFIED',
+              ('modified', False): 'FILE_MODIFIED',
+}
+
+class KNPSLoggingEventHandler(FileSystemEventHandler):
+    """Logs all the events captured."""
+
+    def __init__(self, metadata):
+        self.metadata = metadata
+
+    def on_any_event(self, event):
+
+
+        src_file_hash = None
+        dest_file_hash = None
+
+        addl_data = dict(self.metadata)
+        addl_data['src_path'] = event.src_path
+
+        if not event.is_directory:
+            src_file_hash = hash_file(event.src_path)
+
+        if src_file_hash:
+            addl_data['src_file_hash'] = src_file_hash
+
+        if event.event_type == 'moved':
+            addl_data['dest_path'] = event.dest_path
+            if not event.is_directory:
+                dest_file_hash = hash_file(event.dest_path)
+            if dest_file_hash:
+                addl_data['dest_file_hash'] = dest_file_hash
+
+        addl_data['timestamp'] = datetime.now().astimezone().isoformat()
+        addl_data['action'] = EVENT_TAGS[(event.event_type, event.is_directory)]
+        print(json.dumps(addl_data, indent=2))
+        print('---')
+
+class FileMonitor:
+    def __init__(self, user):
+        self.user = user
+        self.watcher = Watcher(self.user)
+        self.config = None
+        self.db = None
+        self.knps_version = get_version()
+
+        self.dirs = self.user.get_dirs()
+
+        self.metadata = {'username': self.user.username,
+                         'knps_version': self.knps_version,
+                         'knps_source': 'FileMonitor'}
+
+        self.observer = Observer()
+
+    def run(self):
+        path = '/Users/mike/tmp/mrander_data'
+        event_handler = KNPSLoggingEventHandler(self.metadata)
+        observer = Observer()
+        observer.schedule(event_handler, path, recursive=True)
+
+        observer.start()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+        observer.join()
+
+class ProcessMonitor:
+    def __init__(self, user):
+        self.user = user
+        self.watcher = Watcher(self.user)
+        self.config = None
+        self.db = None
+        self.knps_version = get_version()
+
+        self.dirs = self.user.get_dirs()
+
+        self.metadata = {'username': self.user.username,
+                         'knps_version': self.knps_version,
+                         'knps_source': 'ProcessMonitor'}
+
+        self.observer = Observer()
+
+    def __make_process_key__(self, p):
+        return f"{p['pid']}_{p['create_time']}"
+
+
+    def run(self):
+        path = '/Users/mike/tmp/mrander_data'
+
+        processes = {}
+
+        try:
+            while True:
+                # time.sleep(1)
+
+                for proc in psutil.process_iter():
+                    try:
+                        pinfo = proc.as_dict(attrs=['pid', 'name', 'cmdline', 'open_files', 'create_time'])
+
+                        if pinfo['open_files'] != None:
+                            open_files = pinfo['open_files']
+                            key = self.__make_process_key__(pinfo)
+                            if not processes.get(key, None) == open_files:
+                                processes[key] = open_files
+                                for f in open_files:
+                                    if path in f.path:
+                                        pinfo['open_files'] = [x.path for x in open_files]
+                                        pinfo['timestamp'] = datetime.now().astimezone().isoformat()
+                                        pinfo['action'] = 'PROCESS_OBSERVED'
+                                        print(json.dumps(self.metadata | pinfo, indent=2))
+                                        print('---')
+                                        break
+
+                    except psutil.NoSuchProcess:
+                        pass
+
+        except KeyboardInterrupt:
+            print("Done")
+
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+
+class CustomHttpHandler(logging.Handler):
+    def __init__(self, url: str, token: str, silent: bool = True):
+        '''
+        Initializes the custom http handler
+        Parameters:
+            url (str): The URL that the logs will be sent to
+            token (str): The Authorization token being used
+            silent (bool): If False the http response and logs will be sent
+                           to STDOUT for debug
+        '''
+        self.url = url
+        self.token = token
+        self.silent = silent
+
+        # sets up a session with the server
+        self.MAX_POOLSIZE = 100
+        self.session = session = requests.Session()
+
+        session.headers.update({
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer %s' % (self.token)
+        })
+
+        self.session.mount('http://', HTTPAdapter(
+            max_retries=Retry(
+                total=5,
+                backoff_factor=0.5,
+                status_forcelist=[403, 500]
+            ),
+            pool_connections=self.MAX_POOLSIZE,
+            pool_maxsize=self.MAX_POOLSIZE
+        ))
+
+        super().__init__()
+
+    def emit(self, record):
+        '''
+        This function gets called when a log event gets emitted. It recieves a
+        record, formats it and sends it to the url
+        Parameters:
+            record: a log record
+        '''
+        logEntry = self.format(record)
+        response = self.session.post(self.url, data=logEntry)
+
+        if not self.silent:
+            print(logEntry)
+            print(response.content)
+
+class LogMessage:
+    def __init__(self, user):
+        self.user = user
+        self.knps_version = get_version()
+
+        self.data = {}
+
+        self.data['metadata'] = {'username': self.user.username,
+                                 'knps_version': self.knps_version,
+                                 'source': 'LogMessageBuilder',
+                                 'message_start_time': datetime.now().astimezone().isoformat()}
+
+
+    def add_metadata(self, key, value):
+        if 'metadata' not in self.data:
+            self.data['metadata'] = {}
+        self.data['metadata'][key] = value
+
+    def add_input(self, path=None, hash=None, timestamp=None, comment=None, extra=None):
+        if 'inputs' not in self.data:
+            self.data['inputs'] = []
+
+        input = {}
+        if path:
+            input['path'] = path
+        if hash:
+            input['hash'] = hash
+        if timestamp:
+            input['timestamp'] = timestamp
+        if comment:
+            input['comment'] = comment
+        if extra:
+            input['extra'] = extra
+
+        self.data['inputs'].append(input)
+
+    def add_output(self, path=None, hash=None, timestamp=None, comment=None, extra=None):
+        if 'outputs' not in self.data:
+            self.data['outputs'] = []
+
+        output = {}
+        if path:
+            output['path'] = path
+        if hash:
+            output['hash'] = hash
+        if timestamp:
+            output['timestamp'] = timestamp
+        if comment:
+            output['comment'] = comment
+        if extra:
+            output['extra'] = extra
+
+        self.data['outputs'].append(output)
+
+    def add_action(self, type=None, name=None, timestamp=None, comment=None, extra=None):
+        action = {}
+        if type:
+            action['type'] = type
+        if name:
+            action['name'] = name
+        if timestamp:
+            action['timestamp'] = timestamp
+        if comment:
+            action['comment'] = comment
+        if extra:
+            action['extra'] = extra
+
+        self.data['action'] = action
+
+    def add_comment(self, comment):
+        self.data['comment'] = comment
+
+    def add_extra(self, extra):
+        # This should be a dict
+        self.data['extra'] = extra
+
+class Logger:
+    def __init__(self, user, token, use_dev=False):
+        self.user = user
+        self.token = token
+
+        self.watcher = Watcher(self.user)
+        self.config = None
+        self.db = None
+        self.knps_version = get_version()
+
+        self.dirs = self.user.get_dirs()
+
+        # create logger
+        self.logger = logging.getLogger('')
+        self.logger.setLevel(logging.INFO)
+
+        # create formatter - this formats the log messages accordingly
+        formatter = logging.Formatter('%(message)s')
+
+        if use_dev:
+            self.log_server = KNPS_SERVER_DEV
+        else:
+            self.log_server = KNPS_SERVER_PROD
+
+        # create a custom http logger handler
+        httpHandler = CustomHttpHandler(
+            url=f'http://{self.log_server}/log',
+            token=self.token,
+            silent=False
+        )
+
+        httpHandler.setLevel(logging.INFO)
+
+        # add formatter to custom http handler
+        httpHandler.setFormatter(formatter)
+
+        # add handler to logger
+        self.logger.addHandler(httpHandler)
+
+    def get_token(self):
+        if self.user:
+            response = requests.post(f'http://{self.log_server}/get_log_token', data={'username': self.user.username})
+            obj_data = response.json()
+            return obj_data.get('token', 'No token')
+        return 'No token available'
+
+    def log(self, message):
+        try:
+            if type(message) == LogMessage:
+                message.data['metadata']['send_time'] = datetime.now().astimezone().isoformat()
+                json_msg = json.dumps(message.data)
+            else:
+                json_msg = json.dumps({
+                    'send_time': datetime.now().astimezone().isoformat(),
+                    'username': self.user.username,
+                    'knps_version': self.knps_version,
+                    'knps_source': 'LoggerAPI'} | message
+                )
+            self.logger.info(json_msg)
+        except TypeError:
+            raise TypeError('KNPS Logger payload must be a dict or LogMessage object.')
+
+    def start_message(self):
+        return LogMessage(self.user)
 
 #
 # main()
@@ -963,8 +1293,13 @@ def main():
     parser.add_argument("--sync", action="store_true", help="Sync observations to service")
     parser.add_argument("--server", help="Set KNPS server. Options: dev, prod, or address:port")
     parser.add_argument("--monitor", action="store_true", help="Run KNPS as a process and file system monitor.")
+    parser.add_argument("--proc_logger", action="store_true", help="Run KNPS as a process and file system monitor.")
+    parser.add_argument("--file_logger", action="store_true", help="Run KNPS as a process and file system monitor.")
+    parser.add_argument("--log", action="store_true", help="Run KNPS as a process and file system monitor.")
     parser.add_argument("--store", help="Upload bytes in addition to metadata. Options: True or False (default)")
     parser.add_argument("--version", action="store_true", help="Display version information")
+    parser.add_argument("--get_token", action="store_true", help="Get token for logging API")
+    parser.add_argument("--get_dev_token", action="store_true", help="Get token for logging API (dev server)")
     parser.add_argument('args', type=str, help="KNPS command arguments", nargs='*' )
 
     args = parser.parse_args()
@@ -1054,6 +1389,37 @@ def main():
         else:
             m = Monitor(u)
             m.run()
+    elif args.get_token:
+        if not u.username:
+            print("Not logged in; please run: knps --login")
+        else:
+            logger = Logger(u, None)
+            token = logger.get_token()
+            if token:
+                print(f'API token: {token}')
+    elif args.get_dev_token:
+        if not u.username:
+            print("Not logged in; please run: knps --login")
+        else:
+            logger = Logger(u, None, True)
+            token = logger.get_token()
+            if token:
+                print(f'API token: {token}')
+    elif args.proc_logger:
+        if not u.username:
+            print("Not logged in; please run: knps --login")
+        else:
+            m = ProcessMonitor(u)
+            m.run()
+    elif args.file_logger:
+        if not u.username:
+            print("Not logged in; please run: knps --login")
+        else:
+            m = FileMonitor(u)
+            m.run()
+    elif args.log:
+        logger = Logger(u.username, '9d06f85af8305616804aec86f9ec848a')
+        logger.log({'aaaaa': 1})
 
 if __name__ == "__main__":
     main()

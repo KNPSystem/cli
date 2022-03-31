@@ -4,3 +4,4 @@ PyPDF2==1.26.0
 pyyaml==6.0
 binaryornot==0.4.4
 psutil==5.9.0
+watchdog==2.1.6
