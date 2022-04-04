@@ -34,6 +34,18 @@ from watchdog.events import FileSystemEventHandler
 import pkg_resources
 import threading
 
+import subprocess
+import os
+import time
+import psutil
+
+import networkx as nx
+import networkx.algorithms.community as nx_comm
+import re
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+
 from knps.settings import (
     CACHE_FILE_PROCESSING,
     KNPS_SERVER_DEV,
@@ -57,6 +69,7 @@ global_file_process_dict = {}
 global_count = 0
 global_count_lock = threading.Lock()
 
+global_open_processes = {}
 ###################################################
 # Some util functions
 ###################################################
@@ -90,7 +103,6 @@ def hash_file(fname, stats=None):
 
 def get_file_data(fname):
     p = Path(fname)
-    print(p, p.exists())
     if not p.exists():
         return {}
     try:
@@ -666,7 +678,7 @@ class Watcher:
     #
     # Collect some observations
     #
-    def observeAndSync(self, file_loc = None, process=None, single_file = None, verbose = True):
+    def observeAndSync(self, file_loc = None, process=None, single_file = None, single_file_hash = None, verbose = True):
         if file_loc == None:
             file_loc = __file__
         # If there are TODO items outstanding, great.
@@ -705,6 +717,8 @@ class Watcher:
 
         if single_file:
             todoPair = (todoPair[0], [single_file]) ##There may be a better way to do this??
+            if single_file_hash:
+                file_hashes[single_file] = single_file_hash
 
         if verbose:
             print(todoPair)
@@ -821,197 +835,129 @@ class Watcher:
         #     optionalFields["shingles"] = shingles
         return (f, file_hash, file_type, line_hashes, optionalFields)
 
-class MyHandler(FileSystemEventHandler):
-
-    @staticmethod
-    def on_any_event(event):
-        thread = threading.Thread(target = on_any_event_thread, args = (event, False))
-        thread.start()
-
-def on_any_event_thread(event, verbose = True):
-    # print(event)
-    # print(dir_regex)
-    global global_procs, global_count, global_count_lock
-    pathname = event.src_path
-    # print()
-    # print("\n\n\n\n\n\n")
-    if event.is_directory or event.event_type != "modified":
-        return None
-    else:
-        dt = datetime.now()
-        match = re.search(global_dir_regex, pathname)
-        if match:
-            if True:
-                print(time.time(), event)
-            p = Path(pathname)
-            if not p.exists():
-                return {}
-            try:
-                stats = p.stat()
-                if stats.st_size == 0:
-                    print("0 size")
-                    return
-            except:
-                pass
-            open_type = None
-            proc = None
-            proc2 = None
-
-            ## In order to catch vim
-            # loc = pathname.rindex("/")+1
-            # similar_path = pathname[:loc] + "." + pathname[loc:] + ".swp"
-            # # print("\n\n\n\n\n\n", global_procs, similar_path, "\n\n\n\n\n\n")
-            # for key, val in global_procs.items():
-            #     if similar_path in val["output_files"]:
-            #         file_data = get_file_data(pathname)
-            #         similar_file_hash = None 
-            #         for temp, data in val["file_data"].items():
-            #             # print(temp, data["file_name"], similar_path)
-            #             if data["file_name"] == similar_path:
-            #                 similar_file_hash = data["file_hash"]
-            #         # print(similar_file_hash)
-            #         val["output_files"].remove(similar_path)
-            #         val["output_files"].add(pathname)
-            #         del val["file_data"][similar_file_hash]
-            #         val["file_data"][file_data["file_hash"]] = file_data
-            #         val["outputs"].add(file_data["file_hash"])
-            #         val["outputs"].remove(similar_file_hash)
-                    # del val['synced']
-
-            proc = global_file_process_dict.get(pathname, None)
-            if not proc:
-                if verbose:
-                    print("NO PROCESS DETECTED", pathname)
-                if not (pathname.startswith('~$') or pathname.endswith('~') or pathname.endswith('.numbers') or pathname.endswith('.swp') or pathname.endswith('.swx')):
-                    global_watcher.observeAndSync(single_file = pathname, verbose = verbose)
-                return None
-            del global_file_process_dict[pathname]
-            processes = list(proc.values())
-            processes.sort(reverse = True)
-            proc = processes[0][1]
-            global_count_lock.acquire()
-            global_count += 1
-            global_count_lock.release()
-            print("\n\n\n\n\n", global_count)
-            # print(proc, "\n\n\n", pathname, "\n\n\n")
-            proc_key = proc['name'] + "." + str(proc["pid"])
-
-            if proc_key not in global_procs:
-                global_procs[proc_key] = {'name': proc['name'],
-                                            'key': proc_key,
-                                            'timestamp': dt,
-                                            'inputs': [],
-                                            'outputs': [],
-                                            'accesses': [],
-                                            'input_files': [],
-                                            'output_files': [],
-                                            'access_files': [],
-                                            'cmdline': proc['cmdline'],
-                                            'pid':  proc['pid'],
-                                            'file_data': {}}
-            # else:
-            #     print("\n", "outputfiles 0", global_procs[proc_key]['output_files'], "\n")
-            global_procs[proc_key]['last_update'] = dt
-
-            # see if the 'accessed' files were modified, if so, they're outputs
-            modified_flag = False
-            try:
-                last_modified = Path(pathname).stat().st_mtime
-                if last_modified >= global_procs[proc_key]['timestamp'].timestamp():
-                    modified_flag = True
-            except:
-                pass
-
-            file_data = get_file_data(pathname)
-            # print(file_data)
-            # print("\n\n\n", "file_data", file_data, global_procs, "\n\n\n")
-
-            if proc["name"] == "Python":
-                python_file = proc["cwd"] + "/" + proc["cmdline"][1]
-                global_procs[proc_key]['inputs'].append(get_file_data(python_file)["file_hash"])
-                global_procs[proc_key]['input_files'].append(python_file)
-            elif proc["name"] == "vim":
-                vim_file = proc["cwd"] + "/" + proc["cmdline"][1]
-                file_data = get_file_data(vim_file)
-            if not file_data:
-                # checkOverallProcesses(dt, verbose)
-                return
-
-            file_hash = file_data['file_hash']
-
-            global_procs[proc_key]['file_data'][file_hash] = file_data
-
-            global_procs[proc_key]['outputs'].append(file_hash)
-            # print("\n", "file_data", file_data['file_name'], "\n")
-            global_procs[proc_key]['output_files'].append(file_data['file_name'])
-            global_procs[proc_key]['last_update'] = dt
-            global_procs[proc_key].pop('synced', None) # Need to sync again
-
-
-            global_watcher.observeAndSync(single_file = pathname, verbose = verbose)
-#             checkOverallProcesses(dt, verbose)
-
-# def checkOverallProcesses(dt, verbose = True):
-#     # print("Checking Processes", global_procs)
-    for key, p in global_procs.items():
-        if 'last_update' in p and 'synced' not in p and len(p['outputs']) > 0:
-
-            diff = dt - p['last_update']
-            if diff.seconds >= PROCESS_SYNC_AGE_SECONDS:
-                # print("here")
-                # print(f'Syncing {p["name"]}')
-                global_procs[key]['synced'] = True
-                thread = threading.Thread(target = observeAndSyncHelper, args = (copy.deepcopy(p), verbose))
-                thread.start()
-                # global_watcher.observeAndSync(process=copy.deepcopy(p), verbose = True)
-
-def observeAndSyncHelper(p, v = True):
-    global_watcher.observeAndSync(process= p , verbose = v)
-
 class Monitor:
     def __init__(self, user):
         self.user = user
-        global global_watcher
-        global_watcher = Watcher(self.user)
+        self.watcher = Watcher(self.user)
         self.config = None
         self.db = None
         self.knps_version = get_version()
 
         self.dirs = self.user.get_dirs()
-        global global_dir_regex 
-        global_dir_regex = r'{}'.format('|'.join([x.lstrip('/') for x in self.dirs]))
+        self.dir_regex = r'{}'.format('|'.join([x.lstrip('/') for x in self.dirs]))
 
         self.proc_cache = {}
-        self.observer = Observer()
 
     def run(self):
-        event_handler = MyHandler()
-        self.observer.schedule(event_handler, '/', recursive = True)
-        self.observer.start()
-        print("started running")
+        cmd = ["sudo","rwsnoop","-n", "Python", "-t"] ## TODO:change this function to something more generic!!
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        dir_regex = r'{}'.format('|'.join([x.lstrip('/') for x in self.dirs]))
 
-    def stop(self):
-        self.observer.stop()
-        print("Observer Stopped")
-        self.observer.join()
+        blacklist = ['stat64', 'filecoordinationd', 'getattrlist', 'fsgetpath', 'getxattr', 'fsctl', 'statfs64']
+        blacklist_regex = r'{}'.format('|'.join(blacklist))
 
-def consistentlyUpdateFileProcesses():
-    while True:
-        for temp_proc in psutil.process_iter():
+        procs = {}
+        this_process_id = os.getpid()
+        previous_pid = None
+        previous_filename = None
+        for line in proc.stdout:
+
+            dt = datetime.now()
+
+            for key, p in procs.items():
+                if 'last_update' in p and 'synced' not in p and len(p['outputs']) > 0:
+
+                    diff = dt - p['last_update']
+                    if diff.seconds >= PROCESS_SYNC_AGE_SECONDS:
+                        print(f'Syncing {p["name"]}')
+                        procs[key]['synced'] = True
+
+                        self.watcher.observeAndSync(process=p)
+
+
+
+            line = line.rstrip().decode()
+            if re.search(blacklist_regex, line):
+                continue
+
+            # match = re.search(dir_regex, line)
             try:
-                pinfo = temp_proc.as_dict(attrs=['pid', 'name', 'cmdline', 'open_files', 'cwd'])
-                if pinfo['open_files'] != None and pinfo["name"] not in ["cloudd", "bird", "mdworker_shared"]:
-                    if len(pinfo["cmdline"]) > 0 and pinfo["cmdline"][-1] == "--monitor":
-                        continue
-                    for f in pinfo['open_files']:
-                        if re.search(global_dir_regex, f.path) and f.path[-9:] != ".DS_Store":
-                            if f.path not in global_file_process_dict:
-                                global_file_process_dict[f.path] = {}
-                            global_file_process_dict[f.path][pinfo["pid"]] = (time.time(), pinfo)
-                            # print("\n", f.path, pinfo["pid"], pinfo["name"], pinfo["open_files"], "\n")
-            except psutil.NoSuchProcess:
-                pass
-        time.sleep(1)
+                process_time, uid, pid, process_name, d, bytes, filename = line.split() ##uid is user id, pid is process id
+            except:
+                print(line)
+                continue
+            if len(filename) < 2 or filename.count(".") != 1 or "__" in filename or filename.endswith('.pyc') or this_process_id == int(pid):
+                continue
+            if previous_pid == pid and filename == previous_filename and d == "R":
+                    continue
+            print(previous_pid, pid, filename, previous_filename)
+            previous_pid = pid
+            previous_filename = filename
+            file_data = None
+            k = 0
+            if (filename, pid) in global_open_processes:
+                (open_time, path) = global_open_processes[(filename, pid)] ## TODO: POSSIBLY ALSO CHECK if times are close
+                file_data = get_file_data(path)
+            if not file_data:
+                p = psutil.Process(pid = int(pid)) ## TODO: Sometimes this does not work, need to determine what is going wrong here.
+                path = p.cwd() + "/" + filename ## TODO: POSSIBLY LOOK INTO THE OPEN FILES AS WELL
+                file_data = get_file_data(path) 
+            if not file_data:
+                while (filename, pid) not in global_open_processes and k < 10:
+                    time.sleep(0.005)
+                    k += 1
+                if (filename, pid) in global_open_processes:
+                    (open_time, path) = global_open_processes[(filename, pid)] ## TODO: POSSIBLY ALSO CHECK if times are close
+                    file_data = get_file_data(path)
+                else:
+                    continue
+            if not re.search(dir_regex, path):
+                continue
+            print(line, filename, file_data, previous_pid, previous_filename)
+            file_hash = file_data['file_hash']
+
+            proc_key = f'{process_name}.{pid}'
+            
+
+            if proc_key not in procs:
+                procs[proc_key] = {'name': process_name,
+                                    'key': proc_key,
+                                    'timestamp': dt,
+                                    'inputs': [],
+                                    'outputs': [],
+                                    'accesses': [],
+                                    'input_files': [],
+                                    'output_files': [],
+                                    'access_files': [],
+                                    'cmdline': [],
+                                    'pid': pid,
+                                    'file_data': {}}
+            procs[proc_key]['file_data'][file_hash] = file_data
+
+            if d == "R":
+                procs[proc_key]["inputs"].append(file_hash)
+                procs[proc_key]["input_files"].append(path)
+            else:
+                procs[proc_key]["outputs"].append(file_hash)
+                procs[proc_key]["output_files"].append(path)
+            procs[proc_key]['last_update'] = dt
+
+            self.watcher.observeAndSync(single_file = path, single_file_hash = file_hash, verbose = False)
+            # print(len(procs.keys()))
+
+def consistentlyTrackOpenFiles():
+    global global_open_processes
+    proc = subprocess.Popen(["sudo","opensnoop","-n", "Python", "-s"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in proc.stdout:
+        try:
+            line = line.decode("ascii")
+            time, uid, pid, cmd, fd, path = line.split()
+            filename = path[path.rindex("/")+1:]
+        except:
+            continue
+        if len(filename) < 2 or filename.count(".") != 1 or "__" in filename or filename.endswith('.pyc'):
+            continue
+        global_open_processes[(filename, pid)] = (time, path)
 
 def main():
     # execute only if run as a script
@@ -1116,15 +1062,24 @@ def main():
         if not u.username:
             print("Not logged in; please run: knps --login")
         else:
-            thread = threading.Thread(target = consistentlyUpdateFileProcesses)
+            thread = threading.Thread(target = consistentlyTrackOpenFiles)
             thread.start()
             m = Monitor(u)
             m.run()
-            try:
-                while True:
-                    time.sleep(5)
-            except:
-                m.stop()
+            # try:
+            #     while True:
+            #         time.sleep(5)
+            # except:
+            #     print("ending stuff")
+            #     process_sudo = psutil.Process(proc.pid)
+            #     children = process_sudo.children(recursive=True)
+            #     # print(children)
+            #     for child in children:
+            #       if child.name() == "ksh": # killing ksh also kills dtrace subprocess
+            #         os.system("sudo pkill -9 -P " + str(child.pid))
+            #         break
+            #     os.system("sudo pkill -9 -P " + str(proc.pid))
+            #     m.stop()
 
 if __name__ == "__main__":
     main()
