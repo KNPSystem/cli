@@ -1224,9 +1224,8 @@ class Logger:
         self.dirs = self.user.get_dirs()
 
         # create logger
-        self.logger = logging.getLogger('')
+        self.logger = logging.getLogger('KNPS_LOGGER')
         self.logger.setLevel(logging.INFO)
-
         # create formatter - this formats the log messages accordingly
         formatter = logging.Formatter('%(message)s')
 
