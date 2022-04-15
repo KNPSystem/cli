@@ -974,8 +974,6 @@ class KNPSLoggingEventHandler(FileSystemEventHandler):
         self.metadata = metadata
 
     def on_any_event(self, event):
-
-
         src_file_hash = None
         dest_file_hash = None
 
@@ -1140,13 +1138,16 @@ class LogMessage:
         self.user = user
         self.knps_version = get_version()
 
-        self.data = {}
+        self.uuid = str(uuid.uuid4())
+        self.install_id = user.get_install_id()
+
+        self.data = {'message_id': self.uuid}
 
         self.data['metadata'] = {'username': self.user.username,
+                                 'install_id': self.install_id,
                                  'knps_version': self.knps_version,
                                  'source': 'LogMessageBuilder',
                                  'message_start_time': datetime.now().astimezone().isoformat()}
-
 
     def add_metadata(self, key, value):
         if 'metadata' not in self.data:
